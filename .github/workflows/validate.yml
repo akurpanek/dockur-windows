@@ -1,0 +1,138 @@
+name: Full Static Analysis with Variable Lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  static-analysis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # -----------------------------
+      # 1. PowerShell Syntax + Strict Mode
+      # -----------------------------
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          Write-Output "Checking all PS scripts syntax..."
+          $psFiles = Get-ChildItem storage/OEM -Recurse -Filter *.ps1
+          if ($psFiles.Count -eq 0) { Write-Error "No PS scripts found!"; exit 1 }
+          foreach ($file in $psFiles) {
+              Write-Output "Validating $($file.FullName)"
+              try {
+                  pwsh -NoProfile -Command {
+                      param($path)
+                      Set-StrictMode -Version Latest
+                      . $path
+                  } -path $file.FullName
+              } catch {
+                  Write-Error "Syntax/StrictMode error in $($file.FullName)"
+                  exit 1
+              }
+          }
+
+      # -----------------------------
+      # 2. PowerShell Variable Lint
+      # -----------------------------
+      - name: Lint PS Variables
+        shell: pwsh
+        run: |
+          Write-Output "Scanning all PS scripts for undefined or global variables..."
+          $psFiles = Get-ChildItem storage/OEM -Recurse -Filter *.ps1
+          foreach ($file in $psFiles) {
+              Write-Output "Analyzing $($file.FullName)..."
+              $lines = Get-Content $file.FullName
+              
+              # Collect all variables used
+              $usedVars = @()
+              foreach ($line in $lines) {
+                  $matches = [regex]::Matches($line, '\$[A-Za-z_][A-Za-z0-9_]*')
+                  foreach ($m in $matches) { $usedVars += $m.Value }
+              }
+              $usedVars = $usedVars | Sort-Object -Unique
+
+              # Check if variables are assigned anywhere
+              foreach ($v in $usedVars) {
+                  $assigned = $false
+                  foreach ($line in $lines) {
+                      if ($line -match "$v\s*=") { $assigned = $true; break }
+                  }
+                  if (-not $assigned) {
+                      Write-Warning "Potential undefined variable $v in $($file.FullName)"
+                  }
+              }
+
+              # Optional: detect global / script scope usage
+              foreach ($v in $usedVars) {
+                  foreach ($line in $lines) {
+                      if ($line -match "\$(global|script):$($v.Substring(1))") {
+                          Write-Warning "Variable $v may use global/script scope in $($file.FullName)"
+                      }
+                  }
+              }
+          }
+
+      # -----------------------------
+      # 3. Validate ODT config.xml
+      # -----------------------------
+      - name: Validate ODT config.xml
+        shell: pwsh
+        run: |
+          $configFile = "storage/OEM/ODT/config.xml"
+          if (-not (Test-Path $configFile)) { Write-Error "config.xml missing!"; exit 1 }
+          try {
+              [xml]$xml = Get-Content $configFile
+              if (-not $xml.Configuration) { Write-Error "<Configuration> missing"; exit 1 }
+
+              $products = $xml.Configuration.Add.Product | ForEach-Object { $_.ID }
+              foreach ($p in $products) {
+                  if (-not ($p -match "O365|ProPlus|Standard|Visio|Project")) {
+                      Write-Warning "Unknown Product ID: $p"
+                  }
+              }
+
+              $langs = $xml.Configuration.Add.Language | ForEach-Object { $_.ID }
+              foreach ($l in $langs) {
+                  if (-not ($l -match "de-DE|en-US|en-GB")) { Write-Warning "Unknown Language ID: $l" }
+              }
+
+              Write-Output "config.xml checks passed"
+          } catch {
+              Write-Error "config.xml parse error"; exit 1
+          }
+
+      # -----------------------------
+      # 4. Validate podman-compose.yml
+      # -----------------------------
+      - name: Validate podman-compose.yml
+        uses: redhat-actions/podman-validate@v1
+        with:
+          file: podman-compose.yml
+
+      # -----------------------------
+      # 5. Check essential OEM files
+      # -----------------------------
+      - name: Check folder structure & essential files
+        shell: pwsh
+        run: |
+          $paths = @(
+              "storage/OEM/install.bat",
+              "storage/OEM/install.ps1",
+              "storage/OEM/ODT/config.xml"
+          )
+          foreach ($p in $paths) {
+              if (-not (Test-Path $p)) { Write-Error "$p missing"; exit 1 }
+          }
+          Write-Output "All essential files present"
+
+      # -----------------------------
+      # 6. Optional: Markdown lint
+      # -----------------------------
+      - name: Lint Markdown
+        uses: actions/checkout@v4
+        run: |
+          find . -name "*.md" -exec markdownlint {} \;
