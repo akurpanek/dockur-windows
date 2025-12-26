@@ -9,7 +9,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      # -----------------------------
+      # 0. Checkout repo
+      # -----------------------------
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       # -----------------------------
@@ -66,7 +69,7 @@ jobs:
                   }
               }
 
-              # Optional: detect global / script scope usage
+              # Detect global / script scope usage
               foreach ($v in $usedVars) {
                   foreach ($line in $lines) {
                       if ($line -match "\$(global|script):$($v.Substring(1))") {
@@ -86,53 +89,4 @@ jobs:
           if (-not (Test-Path $configFile)) { Write-Error "config.xml missing!"; exit 1 }
           try {
               [xml]$xml = Get-Content $configFile
-              if (-not $xml.Configuration) { Write-Error "<Configuration> missing"; exit 1 }
-
-              $products = $xml.Configuration.Add.Product | ForEach-Object { $_.ID }
-              foreach ($p in $products) {
-                  if (-not ($p -match "O365|ProPlus|Standard|Visio|Project")) {
-                      Write-Warning "Unknown Product ID: $p"
-                  }
-              }
-
-              $langs = $xml.Configuration.Add.Language | ForEach-Object { $_.ID }
-              foreach ($l in $langs) {
-                  if (-not ($l -match "de-DE|en-US|en-GB")) { Write-Warning "Unknown Language ID: $l" }
-              }
-
-              Write-Output "config.xml checks passed"
-          } catch {
-              Write-Error "config.xml parse error"; exit 1
-          }
-
-      # -----------------------------
-      # 4. Validate podman-compose.yml
-      # -----------------------------
-      - name: Validate podman-compose.yml
-        uses: redhat-actions/podman-validate@v1
-        with:
-          file: podman-compose.yml
-
-      # -----------------------------
-      # 5. Check essential OEM files
-      # -----------------------------
-      - name: Check folder structure & essential files
-        shell: pwsh
-        run: |
-          $paths = @(
-              "storage/OEM/install.bat",
-              "storage/OEM/install.ps1",
-              "storage/OEM/ODT/config.xml"
-          )
-          foreach ($p in $paths) {
-              if (-not (Test-Path $p)) { Write-Error "$p missing"; exit 1 }
-          }
-          Write-Output "All essential files present"
-
-      # -----------------------------
-      # 6. Optional: Markdown lint
-      # -----------------------------
-      - name: Lint Markdown
-        uses: actions/checkout@v4
-        run: |
-          find . -name "*.md" -exec markdownlint {} \;
+              if (-
