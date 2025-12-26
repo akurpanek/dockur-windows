@@ -27,11 +27,8 @@ jobs:
           foreach ($file in $psFiles) {
               Write-Output "Validating $($file.FullName)"
               try {
-                  pwsh -NoProfile -Command {
-                      param($path)
-                      Set-StrictMode -Version Latest
-                      . $path
-                  } -path $file.FullName
+                  # Run the PS script with StrictMode enabled
+                  pwsh -NoProfile -Command "Set-StrictMode -Version Latest; . '$($file.FullName)'" 
               } catch {
                   Write-Error "Syntax/StrictMode error in $($file.FullName)"
                   exit 1
@@ -89,4 +86,52 @@ jobs:
           if (-not (Test-Path $configFile)) { Write-Error "config.xml missing!"; exit 1 }
           try {
               [xml]$xml = Get-Content $configFile
-              if (-
+              if (-not $xml.Configuration) { Write-Error "<Configuration> missing"; exit 1 }
+
+              $products = $xml.Configuration.Add.Product | ForEach-Object { $_.ID }
+              foreach ($p in $products) {
+                  if (-not ($p -match "O365|ProPlus|Standard|Visio|Project")) {
+                      Write-Warning "Unknown Product ID: $p"
+                  }
+              }
+
+              $langs = $xml.Configuration.Add.Language | ForEach-Object { $_.ID }
+              foreach ($l in $langs) {
+                  if (-not ($l -match "de-DE|en-US|en-GB")) { Write-Warning "Unknown Language ID: $l" }
+              }
+
+              Write-Output "config.xml checks passed"
+          } catch {
+              Write-Error "config.xml parse error"; exit 1
+          }
+
+      # -----------------------------
+      # 4. Validate podman-compose.yml
+      # -----------------------------
+      - name: Validate podman-compose.yml
+        uses: redhat-actions/podman-validate@v1
+        with:
+          file: podman-compose.yml
+
+      # -----------------------------
+      # 5. Check folder structure & essential files
+      # -----------------------------
+      - name: Check essential OEM files
+        shell: pwsh
+        run: |
+          $paths = @(
+              "storage/OEM/install.ps1",
+              "storage/OEM/postinstall.ps1",
+              "storage/OEM/ODT/config.xml"
+          )
+          foreach ($p in $paths) {
+              if (-not (Test-Path $p)) { Write-Error "$p missing"; exit 1 }
+          }
+          Write-Output "All essential files present"
+
+      # -----------------------------
+      # 6. Markdown lint (optional)
+      # -----------------------------
+      - name: Lint Markdown
+        run: |
+          find . -name "*.md" -exec markdownlint {} \;
